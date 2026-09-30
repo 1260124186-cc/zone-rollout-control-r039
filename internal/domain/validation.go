@@ -29,6 +29,11 @@ type RevisionCreateInput struct {
 	Serial    uint32      `json:"serial"`
 	Authority string      `json:"authority"`
 	Entries   []ZoneEntry `json:"entries"`
+	// ExpectedVersion is an optional plan version guard. When zero, no guard is
+	// checked and the append behaves as it did before the guard existed. When
+	// non-zero, it must match the current plan version inside the same
+	// transaction before the revision is appended.
+	ExpectedVersion uint64 `json:"expected_version,omitempty"`
 }
 
 type NodeCreateInput struct {

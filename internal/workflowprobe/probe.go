@@ -14,6 +14,8 @@ func Run(args []string, output io.Writer) error {
 	switch args[0] {
 	case "plan-revision-lifecycle":
 		run = runPlanRevisionLifecycle
+	case "revision-guard":
+		run = runRevisionGuard
 	case "node-lease-allocation":
 		run = runNodeLeaseAllocation
 	case "probe-ingestion":

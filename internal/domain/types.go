@@ -58,6 +58,24 @@ type ZoneRevision struct {
 	CreatedAt  time.Time   `json:"created_at"`
 }
 
+// PlanVersionSummary is the compact plan state returned after a revision is
+// appended. Callers use Version as the expected_version guard for the next
+// append or for activation.
+type PlanVersionSummary struct {
+	ID               string    `json:"id"`
+	Version          uint64    `json:"version"`
+	State            PlanState `json:"state"`
+	LatestRevisionID string    `json:"latest_revision_id,omitempty"`
+}
+
+// RevisionAppendResult is the success payload for appending a zone revision.
+// It pairs the created revision with the new plan version summary so callers
+// can chain guarded writes without re-reading the plan.
+type RevisionAppendResult struct {
+	Revision ZoneRevision       `json:"revision"`
+	Plan     PlanVersionSummary `json:"plan"`
+}
+
 type RolloutPlan struct {
 	ID                  string     `json:"id"`
 	Zone                string     `json:"zone"`

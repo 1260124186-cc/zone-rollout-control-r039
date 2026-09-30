@@ -12,6 +12,7 @@ const (
 	CodeNotFound            ErrorCode = "not_found"
 	CodeInvalidState        ErrorCode = "invalid_state"
 	CodeVersionConflict     ErrorCode = "version_conflict"
+	CodeSequenceConflict    ErrorCode = "sequence_conflict"
 	CodeIdempotencyConflict ErrorCode = "idempotency_conflict"
 	CodeDuplicateRevision   ErrorCode = "duplicate_revision"
 	CodeNodeUnavailable     ErrorCode = "node_unavailable"

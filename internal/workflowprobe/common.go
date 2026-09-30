@@ -33,7 +33,7 @@ func createActivePlan(
 	if err != nil {
 		return domain.RolloutPlan{}, domain.ZoneRevision{}, err
 	}
-	var revision domain.ZoneRevision
+	var revisionResult domain.RevisionAppendResult
 	err = harness.call(http.MethodPatch, "/v1/plans/"+plan.ID+"/revisions", domain.RevisionCreateInput{
 		Serial:    serial,
 		Authority: "ns1." + zone,
@@ -41,13 +41,13 @@ func createActivePlan(
 			{Owner: zone, Type: domain.EntryA, Value: "192.0.2.10"},
 			{Owner: "www." + zone, Type: domain.EntryCNAME, Value: zone},
 		},
-	}, &revision)
+	}, &revisionResult)
 	if err != nil {
 		return domain.RolloutPlan{}, domain.ZoneRevision{}, err
 	}
-	plan.Version++
+	revision := revisionResult.Revision
 	if err := harness.call(http.MethodPatch, "/v1/plans/"+plan.ID+"/activate", map[string]any{
-		"expected_version": plan.Version,
+		"expected_version": revisionResult.Plan.Version,
 	}, &plan); err != nil {
 		return domain.RolloutPlan{}, domain.ZoneRevision{}, err
 	}

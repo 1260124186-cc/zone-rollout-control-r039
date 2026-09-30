@@ -51,16 +51,16 @@ func (s *Service) AddRevision(
 	ctx context.Context,
 	planID string,
 	input domain.RevisionCreateInput,
-) (domain.ZoneRevision, error) {
+) (domain.RevisionAppendResult, error) {
 	normalized, err := domain.NormalizeRevisionInput(input)
 	if err != nil {
-		return domain.ZoneRevision{}, err
+		return domain.RevisionAppendResult{}, err
 	}
 	if err := domain.ValidateRevisionInput(normalized); err != nil {
-		return domain.ZoneRevision{}, err
+		return domain.RevisionAppendResult{}, err
 	}
 	now := s.clock.Now().UTC()
-	var created domain.ZoneRevision
+	var result domain.RevisionAppendResult
 	err = s.store.Write(ctx, func(state *domain.State) error {
 		plan, ok := state.Plans[planID]
 		if !ok {
@@ -72,24 +72,40 @@ func (s *Service) AddRevision(
 				"state":   plan.State,
 			})
 		}
+		// Optimistic version guard. When the caller supplies expected_version it
+		// must match the current plan version before the append. The check runs
+		// inside the same transaction as the append so the two cannot interleave.
+		if normalized.ExpectedVersion > 0 && plan.Version != normalized.ExpectedVersion {
+			return versionConflict(planID, normalized.ExpectedVersion, plan.Version)
+		}
+		var latestSerial uint32
 		for _, revision := range state.Revisions {
 			if revision.PlanID != planID {
 				continue
 			}
-			if revision.Serial == normalized.Serial {
-				return domain.NewError(domain.CodeDuplicateRevision, "plan already contains this serial", map[string]any{
-					"plan_id": planID,
-					"serial":  normalized.Serial,
+			// Idempotent replay: the exact same revision content already exists.
+			if revision.Serial == normalized.Serial &&
+				revision.Authority == normalized.Authority &&
+				reflect.DeepEqual(revision.Entries, normalized.Entries) {
+				return domain.NewError(domain.CodeDuplicateRevision, "plan already contains this revision", map[string]any{
+					"plan_id":     planID,
+					"serial":      normalized.Serial,
+					"revision_id": revision.ID,
 				})
 			}
-			if revision.Serial > normalized.Serial {
-				return domain.Validation("revision serial must increase", map[string]any{
-					"serial": normalized.Serial,
-					"latest": revision.Serial,
-				})
+			if revision.Serial > latestSerial {
+				latestSerial = revision.Serial
 			}
 		}
-		created = domain.ZoneRevision{
+		// Serials must strictly increase within the plan.
+		if normalized.Serial <= latestSerial {
+			return domain.NewError(domain.CodeSequenceConflict, "revision serial must increase", map[string]any{
+				"plan_id": planID,
+				"serial":  normalized.Serial,
+				"latest":  latestSerial,
+			})
+		}
+		created := domain.ZoneRevision{
 			ID:         s.ids.New("rev"),
 			PlanID:     planID,
 			Serial:     normalized.Serial,
@@ -105,10 +121,20 @@ func (s *Service) AddRevision(
 		store.AddAudit(state, s.ids, "revision", created.ID, "added", now, map[string]any{
 			"plan_id": planID,
 			"serial":  created.Serial,
+			"version": plan.Version,
 		})
+		result = domain.RevisionAppendResult{
+			Revision: created,
+			Plan: domain.PlanVersionSummary{
+				ID:               plan.ID,
+				Version:          plan.Version,
+				State:            plan.State,
+				LatestRevisionID: plan.LatestRevisionID,
+			},
+		}
 		return nil
 	})
-	return created, err
+	return result, err
 }
 
 func (s *Service) Activate(

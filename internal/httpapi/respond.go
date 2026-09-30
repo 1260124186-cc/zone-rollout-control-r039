@@ -69,6 +69,7 @@ func statusCode(code domain.ErrorCode) int {
 		return http.StatusNotFound
 	case domain.CodeInvalidState,
 		domain.CodeVersionConflict,
+		domain.CodeSequenceConflict,
 		domain.CodeIdempotencyConflict,
 		domain.CodeDuplicateRevision,
 		domain.CodeNodeUnavailable,
