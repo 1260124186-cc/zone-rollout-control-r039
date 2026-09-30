@@ -93,6 +93,26 @@
       ]
     },
     {
+      "id": "revision-version-guard",
+      "name": "Guarded revision append",
+      "entry": "PATCH /v1/plans/{id}/revisions with optional expected_version",
+      "steps": [
+        "verify the optional plan version guard inside the append transaction",
+        "append the revision and return the new plan version summary",
+        "reject stale guards, serial conflicts, and duplicate content as distinct errors",
+        "preserve the unguarded legacy behavior when expected_version is absent"
+      ],
+      "success": "one racing guarded append commits and returns the incremented plan version; the loser refreshes and retries",
+      "failure": "version_conflict, serial_conflict, and duplicate_revision are distinguishable and commit no state change",
+      "verification": "workflowprobe revision-version-guard covers guarded success, stale guard, serial conflict, duplicate content, and legacy fallback",
+      "module_ids": [
+        "httpapi",
+        "plan",
+        "domain",
+        "storage"
+      ]
+    },
+    {
       "id": "node-lease-allocation",
       "name": "Node lease allocation",
       "entry": "PATCH /v1/plans/{id}/leases",

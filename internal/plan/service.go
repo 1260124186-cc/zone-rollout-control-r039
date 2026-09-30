@@ -47,24 +47,36 @@ func (s *Service) Create(ctx context.Context, input domain.PlanCreateInput) (dom
 	return plan, err
 }
 
+// AddRevision appends an immutable zone revision to a draft plan.
+//
+// When expectedVersion is nil the call keeps the legacy behavior: no plan
+// version guard is checked. When it is non-nil the plan version is verified
+// inside the same write transaction that appends the revision, so a stale
+// guard, a serial conflict, and identical revision content are rejected as
+// distinct errors and no state change is persisted.
 func (s *Service) AddRevision(
 	ctx context.Context,
 	planID string,
 	input domain.RevisionCreateInput,
-) (domain.ZoneRevision, error) {
+	expectedVersion *uint64,
+) (domain.RevisionAppendResult, error) {
 	normalized, err := domain.NormalizeRevisionInput(input)
 	if err != nil {
-		return domain.ZoneRevision{}, err
+		return domain.RevisionAppendResult{}, err
 	}
 	if err := domain.ValidateRevisionInput(normalized); err != nil {
-		return domain.ZoneRevision{}, err
+		return domain.RevisionAppendResult{}, err
 	}
+	guarded := expectedVersion != nil
 	now := s.clock.Now().UTC()
-	var created domain.ZoneRevision
+	var result domain.RevisionAppendResult
 	err = s.store.Write(ctx, func(state *domain.State) error {
 		plan, ok := state.Plans[planID]
 		if !ok {
 			return domain.NotFound("plan", planID)
+		}
+		if guarded && plan.Version != *expectedVersion {
+			return versionConflict(planID, *expectedVersion, plan.Version)
 		}
 		if plan.State != domain.PlanDraft {
 			return domain.InvalidState("revisions can be added only while plan is draft", map[string]any{
@@ -72,24 +84,49 @@ func (s *Service) AddRevision(
 				"state":   plan.State,
 			})
 		}
-		for _, revision := range state.Revisions {
-			if revision.PlanID != planID {
-				continue
+		if guarded {
+			duplicateID := ""
+			latestSerial := uint32(0)
+			for _, revision := range state.Revisions {
+				if revision.PlanID != planID {
+					continue
+				}
+				if revision.Serial > latestSerial {
+					latestSerial = revision.Serial
+				}
+				if duplicateID == "" &&
+					revision.Serial == normalized.Serial &&
+					revision.Authority == normalized.Authority &&
+					reflect.DeepEqual(revision.Entries, normalized.Entries) {
+					duplicateID = revision.ID
+				}
 			}
-			if revision.Serial == normalized.Serial {
-				return domain.NewError(domain.CodeDuplicateRevision, "plan already contains this serial", map[string]any{
-					"plan_id": planID,
-					"serial":  normalized.Serial,
-				})
+			if duplicateID != "" {
+				return duplicateRevision(planID, normalized.Serial, duplicateID)
 			}
-			if revision.Serial > normalized.Serial {
-				return domain.Validation("revision serial must increase", map[string]any{
-					"serial": normalized.Serial,
-					"latest": revision.Serial,
-				})
+			if latestSerial >= normalized.Serial {
+				return serialConflict(planID, normalized.Serial, latestSerial)
+			}
+		} else {
+			for _, revision := range state.Revisions {
+				if revision.PlanID != planID {
+					continue
+				}
+				if revision.Serial == normalized.Serial {
+					return domain.NewError(domain.CodeDuplicateRevision, "plan already contains this serial", map[string]any{
+						"plan_id": planID,
+						"serial":  normalized.Serial,
+					})
+				}
+				if revision.Serial > normalized.Serial {
+					return domain.Validation("revision serial must increase", map[string]any{
+						"serial": normalized.Serial,
+						"latest": revision.Serial,
+					})
+				}
 			}
 		}
-		created = domain.ZoneRevision{
+		created := domain.ZoneRevision{
 			ID:         s.ids.New("rev"),
 			PlanID:     planID,
 			Serial:     normalized.Serial,
@@ -103,12 +140,22 @@ func (s *Service) AddRevision(
 		plan.Version++
 		state.Plans[planID] = plan
 		store.AddAudit(state, s.ids, "revision", created.ID, "added", now, map[string]any{
-			"plan_id": planID,
-			"serial":  created.Serial,
+			"plan_id":      planID,
+			"serial":       created.Serial,
+			"plan_version": plan.Version,
 		})
+		result = domain.RevisionAppendResult{
+			ZoneRevision: created,
+			Plan: domain.PlanVersionSummary{
+				ID:               plan.ID,
+				State:            plan.State,
+				Version:          plan.Version,
+				LatestRevisionID: plan.LatestRevisionID,
+			},
+		}
 		return nil
 	})
-	return created, err
+	return result, err
 }
 
 func (s *Service) Activate(
@@ -288,5 +335,21 @@ func versionConflict(id string, expected uint64, actual uint64) *domain.DomainEr
 		"plan_id":  id,
 		"expected": expected,
 		"actual":   actual,
+	})
+}
+
+func serialConflict(id string, serial uint32, latest uint32) *domain.DomainError {
+	return domain.NewError(domain.CodeSerialConflict, "revision serial must be greater than the latest serial", map[string]any{
+		"plan_id": id,
+		"serial":  serial,
+		"latest":  latest,
+	})
+}
+
+func duplicateRevision(id string, serial uint32, revisionID string) *domain.DomainError {
+	return domain.NewError(domain.CodeDuplicateRevision, "plan already contains identical revision content", map[string]any{
+		"plan_id":     id,
+		"serial":      serial,
+		"revision_id": revisionID,
 	})
 }

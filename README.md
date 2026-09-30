@@ -92,6 +92,49 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/revisions \
   }'
 ```
 
+多个操作员同时给同一草稿追加版本时，可携带可选的 `expected_version` 乐观守卫。守卫在追加事务内校验：
+
+```bash
+curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/revisions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "expected_version": 2,
+    "serial": 2026092502,
+    "authority": "ns1.edge.example",
+    "entries": [
+      {"owner": "edge.example", "type": "A", "value": "192.0.2.11"}
+    ]
+  }'
+```
+
+成功响应在版本对象外返回新的计划版本摘要：
+
+```json
+{
+  "data": {
+    "id": "rev_...",
+    "plan_id": "pln_...",
+    "serial": 2026092502,
+    "authority": "ns1.edge.example",
+    "entries": [{"owner": "edge.example", "type": "A", "value": "192.0.2.11"}],
+    "entry_count": 1,
+    "created_at": "2026-09-25T12:00:00Z",
+    "plan": {
+      "id": "pln_...",
+      "state": "draft",
+      "version": 3,
+      "latest_revision_id": "rev_..."
+    }
+  }
+}
+```
+
+不传 `expected_version` 的旧客户端保持原有行为。携带守卫时，三类失败以不同错误代码区分，均为 HTTP 409 且不修改状态：
+
+- `version_conflict`：守卫已过期，计划当前版本与 `expected_version` 不符（详情含 `expected`、`actual`）。
+- `serial_conflict`：守卫有效，但序列号不严格递增（详情含 `serial`、`latest`）。
+- `duplicate_revision`：守卫有效，但提交了与既有版本完全相同的内容（详情含 `revision_id`）。
+
 激活计划：
 
 ```bash
@@ -170,7 +213,7 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 | `PUT` | `/v1/plans` | 创建计划草稿 |
 | `GET` | `/v1/plans` | 按状态分页查询计划 |
 | `GET` | `/v1/plans/{id}` | 查询计划 |
-| `PATCH` | `/v1/plans/{id}/revisions` | 添加区域版本 |
+| `PATCH` | `/v1/plans/{id}/revisions` | 添加区域版本（可选 `expected_version` 守卫） |
 | `PATCH` | `/v1/plans/{id}/activate` | 激活计划 |
 | `PATCH` | `/v1/plans/{id}/complete` | 完成计划 |
 | `PATCH` | `/v1/plans/{id}/leases` | 给节点分配租约 |
@@ -182,7 +225,8 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 ## 状态及失败行为
 
 - 计划按 `draft -> active -> completed` 单向迁移，激活和完成需要匹配版本。
-- 区域版本只在计划草稿状态可追加，序列号严格递增且内容不可变。
+- 区域版本只在计划草稿状态可追加，序列号严格递增且内容不可变；追加响应返回新的计划版本摘要。
+- 追加版本可选择携带 `expected_version` 守卫，守卫在同一事务内校验，过期返回 `version_conflict`、序列冲突返回 `serial_conflict`、内容重复返回 `duplicate_revision`；不传守卫时保持旧行为。
 - A、AAAA、CNAME 条目在写入前规范化并稳定排序，重复条目直接拒绝。
 - 节点按 `ready -> leased -> ready` 变化，隔离节点不会被选中。
 - 一个节点同一时刻最多有一个 `claimed` 租约。
@@ -213,6 +257,7 @@ curl -sS -X PATCH http://127.0.0.1:8090/v1/plans/<plan_id>/assessments \
 
 ```bash
 go run ./cmd/workflowprobe plan-revision-lifecycle
+go run ./cmd/workflowprobe revision-version-guard
 go run ./cmd/workflowprobe node-lease-allocation
 go run ./cmd/workflowprobe probe-ingestion
 go run ./cmd/workflowprobe consistency-assessment

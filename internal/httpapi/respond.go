@@ -71,6 +71,7 @@ func statusCode(code domain.ErrorCode) int {
 		domain.CodeVersionConflict,
 		domain.CodeIdempotencyConflict,
 		domain.CodeDuplicateRevision,
+		domain.CodeSerialConflict,
 		domain.CodeNodeUnavailable,
 		domain.CodeLeaseExpired,
 		domain.CodeLeaseNotClaimed,

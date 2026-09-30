@@ -12,6 +12,13 @@ type versionInput struct {
 	ExpectedVersion uint64 `json:"expected_version"`
 }
 
+type revisionInput struct {
+	domain.RevisionCreateInput
+	// ExpectedVersion is an optional optimistic guard. A nil pointer means
+	// the legacy, unguarded append; an explicit zero is rejected.
+	ExpectedVersion *uint64 `json:"expected_version"`
+}
+
 func (s *Server) createPlan(w http.ResponseWriter, r *http.Request) {
 	var input domain.PlanCreateInput
 	if err := decode(w, r, &input); err != nil {
@@ -59,12 +66,16 @@ func (s *Server) getPlan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) addRevision(w http.ResponseWriter, r *http.Request) {
-	var input domain.RevisionCreateInput
+	var input revisionInput
 	if err := decode(w, r, &input); err != nil {
 		sendError(w, r, err)
 		return
 	}
-	result, err := s.plans.AddRevision(r.Context(), r.PathValue("id"), input)
+	if input.ExpectedVersion != nil && *input.ExpectedVersion == 0 {
+		sendError(w, r, domain.Validation("expected_version must be greater than zero", nil))
+		return
+	}
+	result, err := s.plans.AddRevision(r.Context(), r.PathValue("id"), input.RevisionCreateInput, input.ExpectedVersion)
 	if err != nil {
 		sendError(w, r, err)
 		return

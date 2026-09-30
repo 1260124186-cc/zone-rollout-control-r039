@@ -167,6 +167,22 @@ type PlanPage struct {
 	Meta  PageMeta      `json:"meta"`
 }
 
+// PlanVersionSummary is the compact plan state returned after a guarded
+// aggregate change, so callers can chain their next optimistic request.
+type PlanVersionSummary struct {
+	ID               string    `json:"id"`
+	State            PlanState `json:"state"`
+	Version          uint64    `json:"version"`
+	LatestRevisionID string    `json:"latest_revision_id,omitempty"`
+}
+
+// RevisionAppendResult wraps a newly appended revision with the resulting
+// plan version summary.
+type RevisionAppendResult struct {
+	ZoneRevision
+	Plan PlanVersionSummary `json:"plan"`
+}
+
 type NodePage struct {
 	Items []ResolverNode `json:"items"`
 	Meta  PageMeta       `json:"meta"`
